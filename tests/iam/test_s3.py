@@ -72,3 +72,36 @@ def test_put_object_with_just_bucket_name(policy_executor, s3_bucket):
             Key='text.txt',
             Body=b'Test Content',
         )
+
+
+def test_condition_key(policy_executor, s3_bucket):
+    """
+        Test that a Condition key PrincipalTag with ForAnyValue and Not returns False when the principal has no tags
+    """
+    policy_executor.set_role_policy({
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "statement1",
+                "Effect": "Allow",
+                "Action": [
+                    "s3:PutObject",
+                    "s3:PutObjectAcl"
+                ],
+                "Resource": f"*",
+                "Condition": {
+                    "ForAnyValue:StringNotLike": {
+                        "aws:PrincipalTag/foo": "bar"
+                    }
+                }
+            }
+        ]
+    })
+
+    client = policy_executor.roleclient('s3')
+    with raises_boto_code('AccessDenied'):
+        client.put_object(
+            Bucket=s3_bucket,
+            Key='text.txt',
+            Body=b'Test Content',
+        )
