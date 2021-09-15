@@ -112,6 +112,10 @@ def test_condition_key_matching_tags(policy_executor, s3_bucket):
         Test that a Condition key PrincipalTag with ForAnyValue and Not returns False when the principal has tags that
         are the same in the condition. This fails because of StringNotLike
     """
+
+    tags = [{'Key': 'foo', 'Value': 'bar'}]
+    policy_executor.tag_role(tags)
+
     policy_executor.set_role_policy({
         "Version": "2012-10-17",
         "Statement": [
@@ -131,9 +135,6 @@ def test_condition_key_matching_tags(policy_executor, s3_bucket):
             }
         ]
     })
-
-    tags = [{'Key': 'foo', 'Value': 'bar'}]
-    policy_executor.tag_role(tags)
 
     client = policy_executor.roleclient('s3')
     with raises_boto_code('AccessDenied'):

@@ -90,13 +90,10 @@ class PolicyExecutor:
 
     def tag_role(self, tags: list):
         client = self.superclient('iam')
-        try:
-            client.tag_role(
-                RoleName=self.role.role_name,
-                Tags=tags
-            )
-        except Exception:
-            print('hit an exception')
+        client.tag_role(
+            RoleName=self.role.role_name,
+            Tags=tags
+        )
 
     def does_role_exist(self, role_name: str):
         client = self.superclient('iam')
