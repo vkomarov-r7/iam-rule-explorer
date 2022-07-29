@@ -169,7 +169,8 @@ class PolicyExecutor:
 @pytest.fixture
 def policy_executor(request):
     test_name = request.node.name
-    executor = PolicyExecutor(id=test_name)
+    # Remove any parameters from test name since aws will not accept the characters [] for role name
+    executor = PolicyExecutor(id=test_name.split("[")[0])
 
     yield executor
 
