@@ -8,6 +8,7 @@ LOG = logging.getLogger(__name__)
 
 LOG_GROUP_NAME = f'iam-arn-test-{uuid4()}'
 ACCOUNT_ID = "050283019178"
+LOG_STREAM_NAME = f'iam-stream-arn-test-{uuid4()}'
 
 @pytest.fixture
 def log_group(policy_executor):
@@ -27,20 +28,34 @@ def log_group(policy_executor):
 @pytest.fixture
 def log_stream(policy_executor, log_group):
     client = policy_executor.superclient('logs')
-    log_stream_name = f'iam-stream-arn-test-{uuid4()}'
+    
 
     client.create_log_stream(logGroupName=log_group,
-                            logStreamName=log_stream_name)
+                            logStreamName=LOG_STREAM_NAME)
 
-    LOG.info("Created log stream: %s", log_stream_name)
+    LOG.info("Created log stream: %s", LOG_STREAM_NAME)
 
-    yield log_stream_name
+    yield LOG_STREAM_NAME
 
-    LOG.info("Deleting log stream: %s", log_stream_name)
+    LOG.info("Deleting log stream: %s", LOG_STREAM_NAME)
     client.delete_log_stream(
         logGroupName=log_group,
-        logStreamName=log_stream_name
+        logStreamName=LOG_STREAM_NAME
         )
+
+@pytest.mark.parametrize("log_group_name", ["*", "log-group:foo:log-stream:*", " "])
+def test_permitted_log_names(policy_executor, log_group_name):
+    client = policy_executor.superclient('logs')
+    with raises_boto_code("InvalidParameterException"):
+        client.create_log_group(logGroupName=log_group_name)
+
+@pytest.mark.parametrize("log_stream_name", ["*"])
+def test_permitted_stream_names(policy_executor, log_group, log_stream_name):
+    client = policy_executor.superclient('logs')
+    with raises_boto_code("InvalidParameterException"):
+        client.create_log_stream(logGroupName=log_group,
+                                logStreamName=log_stream_name)
+
 
 # Allows access to both log group and stream
 @pytest.mark.parametrize(
@@ -121,9 +136,11 @@ def test_full_stream_arn(policy_executor, log_group, log_stream):
 
 
 @pytest.mark.parametrize("incorrect_arn", [
-    f"arn:aws:logs:us-east-1:{ACCOUNT_ID}:log-group::burrito:"
+    f"arn:aws:logs:us-east-1:{ACCOUNT_ID}:log-group:{LOG_GROUP_NAME}:burrito:"
+    f"arn:aws:logs:us-east-1:{ACCOUNT_ID}:log-group:foo:burrito:"
+    f"arn:aws:logs:us-east-1:{ACCOUNT_ID}:log-group:foo:{LOG_STREAM_NAME}:"
     ])
-def test_arn_with_incorrect_stream(policy_executor, log_group, log_stream, incorrect_arn):
+def test_arn_matches_neither(policy_executor, log_group, log_stream, incorrect_arn):
     """Test arn matching with log groups. This test has an incorrect word instead of log-stream"""
     policy_executor.set_role_policy({
         "Version": "2012-10-17",
