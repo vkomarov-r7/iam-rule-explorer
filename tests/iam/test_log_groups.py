@@ -49,7 +49,7 @@ def test_permitted_log_names(policy_executor, log_group_name):
     with raises_boto_code("InvalidParameterException"):
         client.create_log_group(logGroupName=log_group_name)
 
-@pytest.mark.parametrize("log_stream_name", ["*"])
+@pytest.mark.parametrize("log_stream_name", ["*", "foo:*"])
 def test_permitted_stream_names(policy_executor, log_group, log_stream_name):
     client = policy_executor.superclient('logs')
     with raises_boto_code("InvalidParameterException"):
