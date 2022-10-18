@@ -1,3 +1,5 @@
+import pytest
+
 import botocore
 import boto3
 from conftest import Credentials
@@ -7,9 +9,9 @@ This relies on two hard-coded accounts that have management acccess so that we c
 Their trust policies allow for role hopping from the QA account. You might be signed into the QA account for this to work
 """
 
-
+TARGET_ACCOUNT_ID = "593324772711"
 PARENT_ADMIN_ARN = "arn:aws:iam::745948225562:role/SCPTestMasterAccount"
-CHILD_ADMIN_ARN = "arn:aws:iam::593324772711:role/SCPTestChildSuperRole"
+CHILD_ADMIN_ARN = f"arn:aws:iam::{TARGET_ACCOUNT_ID}:role/SCPTestChildSuperRole"
 EXTERNAL_ID = "scps-assume-role-tests"
 # We use hard coded org and ou structure to avoid programmatically creating and tearing down accounts
 # which is not recommended
@@ -51,10 +53,18 @@ def child_superclient(service_name):
 def reset_scps():
     client = parent_client("organizations")
     # Start with baseline of only full access
-    client.attach_policy(
-        PolicyId=FULL_ACCESS_POLICY_ID,
-        TargetId=OU_ID # OU containing child
-    )
+    try:
+        client.attach_policy(
+            PolicyId=FULL_ACCESS_POLICY_ID,
+            TargetId=OU_ID # OU containing child
+        )
+    # It's ok if it's already attached
+    except botocore.exceptions.ClientError as error:
+        if error.response["Error"]["Code"] == "DuplicatePolicyAttachmentException":
+            pass
+        else:
+            raise error
+
     scps = client.list_policies_for_target(
         TargetId=OU_ID,
         Filter="SERVICE_CONTROL_POLICY"
@@ -69,13 +79,31 @@ def reset_scps():
                 TargetId=OU_ID
             )
 
+@pytest.fixture
+def limited_role(request):
+    reset_scps()
+    # assume the child superclient role
+    yield child_superclient("iam")
 
-def test_scp_on_target_account_limits_assumed_role_actions():
+    reset_scps()
+
+# Note the importance of passing limited_role first. Must assume a role in the target account
+# before creating the test role so that the latter is also in the target account
+def test_scp_on_target_account(limited_role, policy_executor):
     """
     Does an scp on the target account limit access?
     """
-    reset_scps()
+    # Caller account should be the target account after calling limited role
+    assert policy_executor._get_user_account_id() == TARGET_ACCOUNT_ID
+    
+    # Identity policy that permits something generic
+    idp = {}
 
+    scp = {}
+
+    # Should work without scp
+
+    # Should not work with scp
 
 def test_scp_on_source_account():
     """
