@@ -23,25 +23,10 @@ OU_ID = "ou-5wjv-glg6vchq"
 FULL_ACCESS_POLICY_ID = "p-FullAWSAccess"
 FULL_ACCESS_POICY_ARN = f"arn:aws:organizations::aws:policy/service_control_policy/{FULL_ACCESS_POLICY_ID}"
 
-def parent_client(service_name):
-    client = boto3.client("sts")
-    credentials = client.assume_role(
-        RoleArn=PARENT_ADMIN_ARN,
-        RoleSessionName="test",
-        ExternalId=EXTERNAL_ID
-    )['Credentials']
 
-    return boto3.client(
-        service_name,
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken'],
-    )
-
-def child_superclient(service_name):
-    client = parent_client("sts")
-    credentials = client.assume_role(
-        RoleArn=CHILD_ADMIN_ARN,
+def assumed_role_client(service_name, target_role_arn, trusted_client):
+    credentials = trusted_client.assume_role(
+        RoleArn=target_role_arn,
         RoleSessionName="Test",
         ExternalId=EXTERNAL_ID
     )["Credentials"]
@@ -52,6 +37,12 @@ def child_superclient(service_name):
         aws_secret_access_key=credentials['SecretAccessKey'],
         aws_session_token=credentials['SessionToken'],
     )
+
+def parent_client(service_name):
+    return assumed_role_client(service_name, PARENT_ADMIN_ARN, boto3.client("sts"))
+
+def child_superclient(service_name):
+    return assumed_role_client(service_name, CHILD_ADMIN_ARN, parent_client("sts"))
 
 # Reset the scps for an ou or an account to be just the default allow all
 def reset_scps(TargetId):
@@ -134,7 +125,7 @@ def limited_role(request):
     reset_parent()
     test_name = request.node.name
     role_name = f"scp_test_role{test_name.split('[')[0]}"
-    # assume the child superclient role
+    # assume the child superclient role so that tested role is in the target account
     client = child_superclient("iam")
      # configure the role to be assumable by parent account
     assume_role_policy = {
@@ -175,7 +166,7 @@ def limited_role(request):
 
 # Note the importance of passing limited_role first. Must assume a role in the target account
 # before creating the test role so that the latter is also in the target account
-def test_scp_on_target_account(limited_role):
+def test_implicit_deny_on_target_account(limited_role):
     """
     Does an scp on the target account limit access. Yes it does!
     """
@@ -223,44 +214,13 @@ def test_scp_on_target_account(limited_role):
     }
 
     policy_name = "allow-put-and-delete-bucket-only"
-    try:
-        scp_id = client.create_policy(
-            Content=json.dumps(scp, indent=2),
-            Description="Limits actions in this account by implicit deny",
-            Name=policy_name,
-            Type="SERVICE_CONTROL_POLICY"
-        )["Policy"]["PolicySummary"]["Id"]
-    except botocore.exceptions.ClientError as error:
-        # If another policy by the same name exists, we want to delete and creat a new one
-        # To avoid unintentionally using a policy from an older test attempt
-        if error.response["Error"]["Code"] == "DuplicatePolicyException":
-            policies = client.list_policies(
-                Filter="SERVICE_CONTROL_POLICY"
-            )["Policies"]
-            for policy in policies:
-                if policy["Name"] == policy_name:
-                    try:
-                        client.delete_policy(
-                            PolicyId=policy["Id"]
-                        )
-                        break
-                    except botocore.exceptions.client_error as other_error:
-                        if other_error == "PolicyInUse":
-                            client.list_targets_for_policy(
-                                PolicyId=policy["Id"]
-                            )
-                        else:
-                            raise other_error
-
-            scp_id = client.create_policy(
-                Content=json.dumps(scp, indent=2),
-                Description="Limits actions in this account by implicit deny",
-                Name=policy_name,
-                Type="SERVICE_CONTROL_POLICY"
-            )["Policy"]["PolicySummary"]["Id"]
-        else:
-            raise error
-
+    scp_id = client.create_policy(
+        Content=json.dumps(scp, indent=2),
+        Description="Limits actions in this account by implicit deny",
+        Name=policy_name,
+        Type="SERVICE_CONTROL_POLICY"
+    )["Policy"]["PolicySummary"]["Id"]
+    
     client.attach_policy(
         PolicyId=scp_id,
         TargetId=TARGET_ACCOUNT_ID
@@ -270,22 +230,11 @@ def test_scp_on_target_account(limited_role):
         PolicyId=FULL_ACCESS_POLICY_ID,
         TargetId=TARGET_ACCOUNT_ID
     )
+    time.sleep(10)
 
-    client = parent_client("sts")
-    credentials = client.assume_role(
-        RoleArn=limited_role.arn,
-        RoleSessionName="test",
-        ExternalId=EXTERNAL_ID
-    )["Credentials"]
-    client = boto3.client(
-        service_name="s3",
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken'],
-    )
+    client = assumed_role_client("s3", target_role_arn=limited_role.arn, trusted_client=parent_client("sts"))
 
     bucket_name = "scp-test-bucket-limited-role"
-    time.sleep(10)
     client.create_bucket(
         Bucket=bucket_name
     )
@@ -303,7 +252,7 @@ def test_scp_on_target_account(limited_role):
     )   
 
 
-def test_scp_on_source_account():
+def test_implicit_deny_on_trusted_account():
     """
     Does an scp on the account assuming the role have any impact?
     """
